@@ -1,0 +1,38 @@
+# --- Terraform ---
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Variable files can hold account IDs and digests. Keep only the examples.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+# Do NOT ignore .terraform.lock.hcl: it must be committed.
+
+# --- Node / app ---
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+.pnpm-store/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
