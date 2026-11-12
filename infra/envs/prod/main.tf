@@ -41,3 +41,18 @@ module "github_oidc" {
   github_repository   = local.github_repository
   ecr_repository_arns = [module.registry.repository_arn]
 }
+
+module "database" {
+  source = "../../modules/database"
+
+  identifier           = "${local.name_prefix}-db"
+  vpc_id               = module.network.vpc_id
+  db_subnet_group_name = module.network.database_subnet_group_name
+
+  db_name  = "libris"
+  username = "libris"
+
+  # Easy to destroy. In a real production, invert both.
+  deletion_protection = false
+  skip_final_snapshot = true
+}

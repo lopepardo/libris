@@ -17,3 +17,11 @@ output "ecr_repository_url" {
 output "github_role_arn" {
   value = module.github_oidc.role_arn
 }
+
+output "db_address" {
+  value = module.database.address
+}
+
+output "db_secret_arn" {
+  value = module.database.master_user_secret_arn
+}
