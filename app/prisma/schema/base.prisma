@@ -1,0 +1,12 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../../src/platform/db/generated"
+  previewFeatures = ["partialIndexes"]
+}
+
+// One Postgres schema per module. Add a module's schema name here
+// when you create it.
+datasource db {
+  provider = "postgresql"
+  schemas  = ["catalog", "lending"]
+}

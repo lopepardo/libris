@@ -1,0 +1,33 @@
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
+
+import type { AppConfig } from "../config/env.js";
+import { buildLoggerOptions } from "../logging/logger.js";
+import { errorHandler } from "./errorHandler.js";
+import { notFoundHandler } from "./notFoundHandler.js";
+
+export type ServerConfig = Pick<AppConfig, "APP_NAME" | "APP_ENV" | "LOG_LEVEL">;
+
+/** Fastify with the cross-cutting setup only: it knows nothing about modules. */
+export const createServer = async (config: ServerConfig) => {
+  const app = Fastify({
+    logger: buildLoggerOptions(config),
+  });
+
+  // Zod validates requests and serializes responses from each route's `schema`.
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  // TODO(OpenAPI): @fastify/swagger with `jsonSchemaTransform` before the routes, plus 4xx/5xx
+  // `response` schemas on each route.
+
+  app.setErrorHandler(errorHandler);
+  app.setNotFoundHandler(notFoundHandler);
+
+  await app.register(cors, { origin: "*" });
+
+  app.get("/health", async (_request, _reply) => ({ status: "ok" }));
+
+  return app;
+};

@@ -1,0 +1,123 @@
+import { hasZodFastifySchemaValidationErrors } from "fastify-type-provider-zod";
+
+import {
+  BusinessError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+} from "../../shared/errors.js";
+
+const VALIDATION_LOCATIONS = ["body", "params", "querystring", "headers"] as const;
+
+export type ErrorDetail = {
+  in: (typeof VALIDATION_LOCATIONS)[number];
+  path: string;
+  message: string;
+};
+
+export type ErrorResponse = {
+  status: number;
+  code: string;
+  message: string;
+  details?: ErrorDetail[];
+};
+
+/**
+ * Fastify client errors we expose, with a stable code and a safe message. Any other 4xx falls back
+ * to BAD_REQUEST and any 5xx (e.g. FST_ERR_HANDLER_TIMEOUT) to 500: add entries as needed,
+ * including plugin errors such as @fastify/rate-limit (429).
+ */
+const FASTIFY_CLIENT_ERRORS: Record<string, ErrorResponse> = {
+  FST_ERR_CTP_INVALID_JSON_BODY: {
+    status: 400,
+    code: "INVALID_JSON",
+    message: "Request body is not valid JSON",
+  },
+  FST_ERR_CTP_EMPTY_JSON_BODY: {
+    status: 400,
+    code: "INVALID_JSON",
+    message: "Request body is empty",
+  },
+  FST_ERR_CTP_INVALID_MEDIA_TYPE: {
+    status: 415,
+    code: "UNSUPPORTED_MEDIA_TYPE",
+    message: "Unsupported media type",
+  },
+  FST_ERR_CTP_BODY_TOO_LARGE: {
+    status: 413,
+    code: "PAYLOAD_TOO_LARGE",
+    message: "Request body is too large",
+  },
+};
+
+const INTERNAL: ErrorResponse = {
+  status: 500,
+  code: "INTERNAL_SERVER_ERROR",
+  message: "Unexpected server error",
+};
+
+const businessStatus = (error: BusinessError): number => {
+  if (error instanceof UnauthorizedError) return 401;
+  if (error instanceof ForbiddenError) return 403;
+  if (error instanceof NotFoundError) return 404;
+  if (error instanceof ConflictError) return 409;
+  return 422;
+};
+
+const readFastifyError = (error: unknown): { code?: string; statusCode?: number } => {
+  if (typeof error !== "object" || error === null) return {};
+  const { code, statusCode } = error as Record<string, unknown>;
+  return {
+    ...(typeof code === "string" && { code }),
+    ...(typeof statusCode === "number" && { statusCode }),
+  };
+};
+
+/** Where Fastify says the validation failed; defaults to the body. */
+const readValidationLocation = (error: object): ErrorDetail["in"] => {
+  const { validationContext } = error as Record<string, unknown>;
+  return VALIDATION_LOCATIONS.find((l) => l === validationContext) ?? "body";
+};
+
+/** Pure: turns anything that was thrown into the public error contract. */
+export const toErrorResponse = (error: unknown): ErrorResponse => {
+  if (hasZodFastifySchemaValidationErrors(error)) {
+    const location = readValidationLocation(error);
+    return {
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "Invalid request data",
+      details: error.validation.map((issue) => ({
+        in: location,
+        // "/tags/0/label" -> "tags.0.label"
+        path: issue.instancePath.replace(/^\//, "").split("/").join("."),
+        message: issue.message ?? "Invalid value",
+      })),
+    };
+  }
+
+  if (error instanceof BusinessError) {
+    return {
+      status: businessStatus(error),
+      code: error.code,
+      message: error.message,
+    };
+  }
+
+  const { code, statusCode } = readFastifyError(error);
+  if (code !== undefined) {
+    const known = FASTIFY_CLIENT_ERRORS[code];
+    if (known) return known;
+  }
+  // Unknown 4xx: keep the status but never echo the library's message.
+  if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+    return {
+      status: statusCode,
+      code: "BAD_REQUEST",
+      message: "The request could not be processed",
+    };
+  }
+
+  return INTERNAL;
+};
