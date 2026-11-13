@@ -1,0 +1,153 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# One deploy at a time, and never cancel one halfway through.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: libris-api
+  CLUSTER: libris-prod-cluster
+  SERVICE: libris-prod-service
+  APP_FAMILY: libris-prod
+  MIGRATE_FAMILY: libris-prod-migrate
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Build, migrate and deploy
+    needs: ci
+    runs-on: ubuntu-24.04-arm # native arm64, free for public repositories
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: github-${{ github.run_id }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.7
+
+      - uses: docker/setup-buildx-action@v4.4.1
+
+      # The attempt number keeps tags unique: ECR tags are immutable, so a re-run
+      # of the same commit would otherwise fail on push.
+      - id: tag
+        run: echo "value=${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - id: build_app
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: ./app
+          target: production
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tag.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - id: build_migrate
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: ./app
+          target: migrate
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tag.outputs.value }}-migrate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run database migrations
+        env:
+          MIGRATE_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}@${{ steps.build_migrate.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          # Reuse the network settings of the running service (subnets, SG, public IP).
+          NETWORK=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].networkConfiguration' --output json)
+
+          aws ecs describe-task-definition --task-definition "$MIGRATE_FAMILY" --query taskDefinition \
+            | jq --arg image "$MIGRATE_IMAGE" '
+                del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                    .compatibilities, .registeredAt, .registeredBy)
+                | .containerDefinitions[0].image = $image' > migrate-td.json
+
+          MIGRATE_TD=$(aws ecs register-task-definition --cli-input-json file://migrate-td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$MIGRATE_TD" \
+            --launch-type FARGATE --network-configuration "$NETWORK" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+
+          TASK_ID="${TASK_ARN##*/}"
+          aws logs get-log-events --log-group-name "/ecs/${APP_FAMILY}" \
+            --log-stream-name "migrate/migrate/${TASK_ID}" \
+            --query 'events[].message' --output text || true
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migration failed (exit code: $EXIT_CODE)"
+            aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+              --query 'tasks[0].stoppedReason' --output text
+            exit 1
+          fi
+
+      - name: Deploy the service
+        env:
+          APP_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}@${{ steps.build_app.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-task-definition --task-definition "$APP_FAMILY" --query taskDefinition \
+            | jq --arg image "$APP_IMAGE" --arg version "$GITHUB_SHA" '
+                del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                    .compatibilities, .registeredAt, .registeredBy)
+                | .containerDefinitions |= map(
+                    if .name == "app" then
+                      .image = $image
+                      | .environment |= map(if .name == "APP_VERSION" then .value = $version else . end)
+                    else . end)' > app-td.json
+
+          APP_TD=$(aws ecs register-task-definition --cli-input-json file://app-td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "New task definition: $APP_TD"
+
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$APP_TD" > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+          # With the circuit breaker, a failed rollout is rolled back and the service
+          # ends up "stable" on the OLD revision, so stability alone proves nothing.
+          CURRENT=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          if [ "$CURRENT" != "$APP_TD" ]; then
+            echo "::error::Deployment was rolled back (service runs $CURRENT)"
+            exit 1
+          fi
+          echo "Deployed $APP_TD"
