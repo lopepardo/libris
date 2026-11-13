@@ -7,7 +7,9 @@ locals {
   environment       = "prod"
   name_prefix       = "${local.project_name}-${local.environment}"
   aws_region        = "us-east-1"
-  github_repository = "lopepardo/libris"
+  # Immutable OIDC subject (owner and repo IDs), see:
+  # gh api repos/<username>/<repo_name>/actions/oidc/customization/sub
+  github_repository = "lopepardo@32173934/libris@1453233667"
 
   tags = {
     Project     = local.project_name
