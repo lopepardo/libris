@@ -41,6 +41,12 @@ module "github_oidc" {
   role_name           = "${local.project_name}-github-deploy"
   github_repository   = local.github_repository
   ecr_repository_arns = [module.registry.repository_arn]
+
+  ecs_cluster_name  = module.service.cluster_name
+  ecs_service_name  = module.service.service_name
+  ecs_task_families = [module.service.app_task_definition, module.service.migrate_task_definition]
+  pass_role_arns    = [module.service.execution_role_arn, module.service.task_role_arn]
+  log_group_name    = module.service.log_group_name
 }
 
 module "database" {
