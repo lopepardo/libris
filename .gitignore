@@ -35,3 +35,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# --- draw.io autosave backups ---
+.$*.bkp
