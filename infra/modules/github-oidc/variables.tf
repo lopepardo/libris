@@ -4,7 +4,7 @@ variable "role_name" {
 }
 
 variable "github_repository" {
-  description = "Repository allowed to assume the role, as OWNER/REPO."
+  description = "Repository allowed to assume the role, in the form used by the OIDC sub claim (OWNER@ID/REPO@ID with immutable subjects)."
   type        = string
 }
 
