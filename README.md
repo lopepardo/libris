@@ -9,7 +9,7 @@ La aplicación es un monolito modular. Su diseño, sus módulos y sus reglas se 
 ```text
 app/      API con Fastify + Prisma + PostgreSQL (ver app/README.md)
 infra/    Terraform: modules/ (piezas reutilizables) y envs/prod (composición)
-docs/     Diagrama de arquitectura, guía de despliegue y colección de requests
+docs/     Diagrama de arquitectura y guía de despliegue
 .github/  Workflows de CI y de despliegue
 ```
 
