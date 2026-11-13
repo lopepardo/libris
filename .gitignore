@@ -11,9 +11,8 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 # Variable files can hold account IDs and digests. Keep only the examples.
-*.tfvars
-*.tfvars.json
-!*.tfvars.example
+**/*.tfvars
+**/*.tfvars.json
 # Do NOT ignore .terraform.lock.hcl: it must be committed.
 
 # --- Node / app ---

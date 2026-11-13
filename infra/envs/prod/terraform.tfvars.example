@@ -1,0 +1,3 @@
+app_image     = "aws_account_id.dkr.ecr.us-east-1.amazonaws.com/repo_name@sha256:ecr_sha256"
+migrate_image = "aws_account_id.dkr.ecr.us-east-1.amazonaws.com/repo_name@sha256:ecr_sha256"
+app_version   = "0.1.0"

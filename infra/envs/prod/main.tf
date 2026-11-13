@@ -31,6 +31,7 @@ module "registry" {
   source = "../../modules/registry"
 
   repository_name = "${local.project_name}-api"
+  max_image_count = 20   # two images per release: app and migrate
   force_delete    = true # allows terraform destroy
 }
 
@@ -52,7 +53,28 @@ module "database" {
   db_name  = "libris"
   username = "libris"
 
+  allowed_security_group_ids = [module.service.tasks_security_group_id]
+
   # Easy to destroy. In a real production, invert both.
   deletion_protection = false
   skip_final_snapshot = true
+}
+
+module "service" {
+  source = "../../modules/service"
+
+  name_prefix = local.name_prefix
+  app_name    = local.project_name
+  app_version = var.app_version
+
+  vpc_id            = module.network.vpc_id
+  public_subnet_ids = module.network.public_subnets
+
+  app_image     = var.app_image
+  migrate_image = var.migrate_image
+
+  db_host                    = module.database.address
+  db_name                    = module.database.db_name
+  db_secret_arn              = module.database.master_user_secret_arn
+  database_security_group_id = module.database.security_group_id
 }
