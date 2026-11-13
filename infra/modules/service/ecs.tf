@@ -119,4 +119,9 @@ resource "aws_ecs_service" "app" {
     aws_lb_listener.http,
     aws_iam_role_policy_attachment.execution,
   ]
+
+  lifecycle {
+    # The pipeline registers new task definition revisions and updates the service.
+    ignore_changes = [task_definition]
+  }
 }
